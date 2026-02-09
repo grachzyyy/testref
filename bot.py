@@ -10,7 +10,7 @@ from aiogram.utils.deep_linking import create_start_link
 # НАСТРОЙКИ
 # =========================
 
-BOT_TOKEN = os.getenv("7427663204:AAFQRxCfOoflGjMxfS71XilBYJH8823F2LE")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 GROUP_ID = -1003609007517
 ADMIN_ID = 5113023867
