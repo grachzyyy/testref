@@ -9,7 +9,6 @@ from aiogram.utils.deep_linking import create_start_link
 # ================= НАСТРОЙКИ =================
 
 BOT_TOKEN = "7964951860:AAH65UxfUC0xrj9In4njb0jbEpUfk-KDn9g"
-
 GROUP_ID = -1003609007517
 ADMIN_ID = 5113023867
 
@@ -36,49 +35,32 @@ async def init_db():
 
 async def get_user(user_id):
     async with aiosqlite.connect("database.db") as db:
-        async with db.execute(
-            "SELECT * FROM users WHERE user_id=?",
-            (user_id,)
-        ) as cursor:
+        async with db.execute("SELECT * FROM users WHERE user_id=?", (user_id,)) as cursor:
             return await cursor.fetchone()
 
 async def add_user(user_id, referrer_id=None):
     async with aiosqlite.connect("database.db") as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO users (user_id, referrer_id) VALUES (?, ?)",
-            (user_id, referrer_id)
-        )
+        await db.execute("INSERT OR IGNORE INTO users (user_id, referrer_id) VALUES (?, ?)", (user_id, referrer_id))
         await db.commit()
 
 async def add_referral(referrer_id):
     async with aiosqlite.connect("database.db") as db:
-        await db.execute(
-            "UPDATE users SET referrals = referrals + 1 WHERE user_id=?",
-            (referrer_id,)
-        )
+        await db.execute("UPDATE users SET referrals = referrals + 1 WHERE user_id=?", (referrer_id,))
         await db.commit()
 
 async def set_joined(user_id):
     async with aiosqlite.connect("database.db") as db:
-        await db.execute(
-            "UPDATE users SET joined=1 WHERE user_id=?",
-            (user_id,)
-        )
+        await db.execute("UPDATE users SET joined=1 WHERE user_id=?", (user_id,))
         await db.commit()
 
 async def save_wallet(user_id, wallet):
     async with aiosqlite.connect("database.db") as db:
-        await db.execute(
-            "UPDATE users SET wallet=? WHERE user_id=?",
-            (wallet, user_id)
-        )
+        await db.execute("UPDATE users SET wallet=? WHERE user_id=?", (wallet, user_id))
         await db.commit()
 
 async def count_joined():
     async with aiosqlite.connect("database.db") as db:
-        async with db.execute(
-            "SELECT COUNT(*) FROM users WHERE joined=1"
-        ) as cursor:
+        async with db.execute("SELECT COUNT(*) FROM users WHERE joined=1") as cursor:
             result = await cursor.fetchone()
             return result[0]
 
@@ -88,7 +70,6 @@ async def count_joined():
 async def start(message: Message):
     args = message.text.split()
     user_id = message.from_user.id
-
     user = await get_user(user_id)
 
     if not user:
@@ -100,7 +81,6 @@ async def start(message: Message):
                     referrer_id = None
             except:
                 pass
-
         await add_user(user_id, referrer_id)
         if referrer_id:
             await add_referral(referrer_id)
@@ -128,7 +108,6 @@ async def start(message: Message):
 /access — получить доступ
 /wallet — указать адрес
 """
-
     await message.answer(text)
 
 # ================= STATS =================
@@ -139,9 +118,7 @@ async def stats(message: Message):
     if not user:
         return await message.answer("Сначала нажмите /start")
     referrals = user[2]
-    await message.answer(
-        f"👥 Приглашено: {referrals}/{REQUIRED_REFERRALS}"
-    )
+    await message.answer(f"👥 Приглашено: {referrals}/{REQUIRED_REFERRALS}")
 
 # ================= ACCESS =================
 
@@ -149,7 +126,7 @@ async def give_access(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
 
-    # Разрешить админу проходить всегда
+    # Админ может проходить всегда
     if user[3] and message.from_user.id != ADMIN_ID:
         return await message.answer("Вы уже получили доступ.")
 
@@ -157,24 +134,20 @@ async def give_access(message: Message):
     if total >= MAX_USERS and message.from_user.id != ADMIN_ID:
         return await message.answer("❌ Лимит участников достигнут.")
 
-    invite = await bot.create_chat_invite_link(
-        chat_id=GROUP_ID,
-        member_limit=1
-    )
+    try:
+        invite = await bot.create_chat_invite_link(chat_id=GROUP_ID, member_limit=1)
+    except Exception as e:
+        return await message.answer(f"❌ Не удалось создать ссылку. Ошибка: {e}")
 
     await set_joined(user_id)
-    await message.answer(
-        f"✅ Доступ открыт!\n\n{invite.invite_link}"
-    )
+    await message.answer(f"✅ Доступ открыт!\n\n{invite.invite_link}")
 
 @dp.message(Command("access"))
 async def access(message: Message):
     user = await get_user(message.from_user.id)
     referrals = user[2]
     if referrals < REQUIRED_REFERRALS and message.from_user.id != ADMIN_ID:
-        return await message.answer(
-            f"❌ Нужно ещё {REQUIRED_REFERRALS - referrals} приглашений."
-        )
+        return await message.answer(f"❌ Нужно ещё {REQUIRED_REFERRALS - referrals} приглашений.")
     await give_access(message)
 
 # ================= WALLET =================
@@ -186,10 +159,7 @@ async def wallet_button(message: Message):
         return await message.answer("Сначала получите доступ в группу.")
     builder = InlineKeyboardBuilder()
     builder.button(text="💳 Указать USDT адрес", callback_data="set_wallet")
-    await message.answer(
-        "Нажмите кнопку и отправьте USDT (TON) адрес:",
-        reply_markup=builder.as_markup()
-    )
+    await message.answer("Нажмите кнопку и отправьте USDT (TON) адрес:", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data == "set_wallet")
 async def ask_wallet(callback: CallbackQuery):
