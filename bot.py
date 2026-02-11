@@ -1,14 +1,13 @@
 import asyncio
 import os
 import aiosqlite
-from aiogram import Bot, Dispatcher
-from aiogram.types import Message
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.utils.deep_linking import create_start_link
 
-# =========================
-# НАСТРОЙКИ
-# =========================
+# ================= НАСТРОЙКИ =================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -21,9 +20,7 @@ MAX_USERS = 2000
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# =========================
-# DATABASE
-# =========================
+# ================= DATABASE =================
 
 async def init_db():
     async with aiosqlite.connect("database.db") as db:
@@ -32,7 +29,8 @@ async def init_db():
             user_id INTEGER PRIMARY KEY,
             referrer_id INTEGER,
             referrals INTEGER DEFAULT 0,
-            joined INTEGER DEFAULT 0
+            joined INTEGER DEFAULT 0,
+            wallet TEXT
         )
         """)
         await db.commit()
@@ -74,6 +72,15 @@ async def set_joined(user_id):
         await db.commit()
 
 
+async def save_wallet(user_id, wallet):
+    async with aiosqlite.connect("database.db") as db:
+        await db.execute(
+            "UPDATE users SET wallet=? WHERE user_id=?",
+            (wallet, user_id)
+        )
+        await db.commit()
+
+
 async def count_joined():
     async with aiosqlite.connect("database.db") as db:
         async with db.execute(
@@ -83,20 +90,7 @@ async def count_joined():
             return result[0]
 
 
-async def top_referrers():
-    async with aiosqlite.connect("database.db") as db:
-        async with db.execute("""
-            SELECT user_id, referrals
-            FROM users
-            ORDER BY referrals DESC
-            LIMIT 10
-        """) as cursor:
-            return await cursor.fetchall()
-
-
-# =========================
-# START
-# =========================
+# ================= START =================
 
 @dp.message(Command("start"))
 async def start(message: Message):
@@ -107,14 +101,13 @@ async def start(message: Message):
 
     if not user:
         referrer_id = None
-
         if len(args) > 1:
             try:
                 referrer_id = int(args[1])
                 if referrer_id == user_id:
                     referrer_id = None
             except:
-                referrer_id = None
+                pass
 
         await add_user(user_id, referrer_id)
 
@@ -123,19 +116,32 @@ async def start(message: Message):
 
     link = await create_start_link(bot, str(user_id), encode=False)
 
-    await message.answer(
-        f"👋 Добро пожаловать!\n\n"
-        f"Для доступа в закрытую группу нужно {REQUIRED_REFERRALS} рефералов.\n\n"
-        f"Ваша ссылка:\n{link}\n\n"
-        f"Проверить прогресс: /stats\n"
-        f"Получить доступ: /access\n\n"
-        f"(Тестовая команда: /alluser)"
-    )
+    text = f"""
+🔥 StableDrop
+
+💰 Условия:
+• 50 USDT за участие
+• 30 USDT за каждого приглашённого (максимум 5)
+• До 200 USDT суммарно
+
+📌 Чтобы получить дроп:
+1. Пригласите {REQUIRED_REFERRALS} друзей
+2. Получите доступ в закрытую группу
+3. После выполнения условий укажите USDT-адрес в сети TON
+
+Ваша ссылка:
+{link}
+
+Команды:
+/stats — прогресс
+/access — получить доступ
+/wallet — указать адрес
+"""
+
+    await message.answer(text)
 
 
-# =========================
-# СТАТИСТИКА
-# =========================
+# ================= STATS =================
 
 @dp.message(Command("stats"))
 async def stats(message: Message):
@@ -145,32 +151,23 @@ async def stats(message: Message):
         return await message.answer("Сначала нажмите /start")
 
     referrals = user[2]
-
     await message.answer(
-        f"👥 Вы пригласили: {referrals}/{REQUIRED_REFERRALS}"
+        f"👥 Приглашено: {referrals}/{REQUIRED_REFERRALS}"
     )
 
 
-# =========================
-# ДОСТУП ПО РЕФЕРАЛАМ
-# =========================
+# ================= ACCESS =================
 
 async def give_access(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
 
-    if not user:
-        return await message.answer("Сначала нажмите /start")
-
-    joined = user[3]
-
-    if joined:
-        return await message.answer("Вы уже получили ссылку.")
+    if user[3]:
+        return await message.answer("Вы уже получили доступ.")
 
     total = await count_joined()
-
     if total >= MAX_USERS:
-        return await message.answer("❌ Лимит 2000 участников достигнут.")
+        return await message.answer("❌ Лимит участников достигнут.")
 
     invite = await bot.create_chat_invite_link(
         chat_id=GROUP_ID,
@@ -180,18 +177,13 @@ async def give_access(message: Message):
     await set_joined(user_id)
 
     await message.answer(
-        f"✅ Доступ открыт!\n\n"
-        f"Ваша одноразовая ссылка:\n{invite.invite_link}"
+        f"✅ Доступ открыт!\n\n{invite.invite_link}"
     )
 
 
 @dp.message(Command("access"))
 async def access(message: Message):
     user = await get_user(message.from_user.id)
-
-    if not user:
-        return await message.answer("Сначала нажмите /start")
-
     referrals = user[2]
 
     if referrals < REQUIRED_REFERRALS:
@@ -202,38 +194,65 @@ async def access(message: Message):
     await give_access(message)
 
 
-# =========================
-# ТЕСТОВЫЙ ПРОПУСК
-# =========================
+# ================= WALLET =================
+
+@dp.message(Command("wallet"))
+async def wallet_button(message: Message):
+    user = await get_user(message.from_user.id)
+
+    if not user or user[3] == 0:
+        return await message.answer(
+            "Сначала получите доступ в группу."
+        )
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💳 Указать USDT адрес", callback_data="set_wallet")
+
+    await message.answer(
+        "Нажмите кнопку и отправьте USDT (TON) адрес:",
+        reply_markup=builder.as_markup()
+    )
+
+
+@dp.callback_query(F.data == "set_wallet")
+async def ask_wallet(callback: CallbackQuery):
+    await callback.message.answer(
+        "Введите ваш USDT адрес в сети TON:"
+    )
+    await callback.answer()
+
+
+@dp.message()
+async def save_wallet_message(message: Message):
+    user = await get_user(message.from_user.id)
+    if not user:
+        return
+
+    if user[3] == 0:
+        return
+
+    wallet = message.text.strip()
+
+    if len(wallet) < 10:
+        return
+
+    await save_wallet(message.from_user.id, wallet)
+
+    await message.answer(
+        "✅ Адрес сохранён. Ожидайте начисления."
+    )
+
+
+# ================= СКРЫТАЯ АДМИН-КОМАНДА =================
 
 @dp.message(Command("alluser"))
 async def alluser(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
     await give_access(message)
 
 
-# =========================
-# АДМИН
-# =========================
-
-@dp.message(Command("admin"))
-async def admin(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    total = await count_joined()
-    top = await top_referrers()
-
-    text = f"📊 Участников: {total}/{MAX_USERS}\n\n🏆 ТОП 10:\n"
-
-    for user_id, refs in top:
-        text += f"{user_id} — {refs}\n"
-
-    await message.answer(text)
-
-
-# =========================
-# ЗАПУСК
-# =========================
+# ================= RUN =================
 
 async def main():
     await init_db()
